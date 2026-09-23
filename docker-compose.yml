@@ -1,0 +1,22 @@
+# Sharded cluster: 1 config server, 2 shards, 1 mongos router. App connects ONLY to mongos (:27017).
+services:
+  configsvr:
+    image: mongo:7.0
+    command: mongod --configsvr --replSet cfgrs --port 27019 --bind_ip_all
+  shard1:
+    image: mongo:7.0
+    command: mongod --shardsvr --replSet shard1rs --port 27018 --bind_ip_all
+  shard2:
+    image: mongo:7.0
+    command: mongod --shardsvr --replSet shard2rs --port 27018 --bind_ip_all
+  mongos:
+    image: mongo:7.0
+    command: mongos --configdb cfgrs/configsvr:27019 --bind_ip_all --port 27017
+    ports: ["27017:27017"]
+    depends_on: [configsvr, shard1, shard2]
+    restart: on-failure   # mongos exits until the config replica set is initiated
+  cluster-init:
+    image: mongo:7.0
+    depends_on: [mongos]
+    volumes: ["./docker/init-cluster.sh:/init.sh:ro"]
+    entrypoint: ["bash", "/init.sh"]

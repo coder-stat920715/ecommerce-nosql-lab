@@ -1,0 +1,11 @@
+spring:
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/ecommerce   # mongos router
+      # We create indexes explicitly (IndexService) so we can drop/recreate them for BEFORE/AFTER benchmarks
+      # and so shardCollection runs on an EMPTY, index-free collection first.
+      auto-index-creation: false
+app:
+  sharding:
+    enabled: true     # set false for single-node Mongo (e.g. the Testcontainers test)
+logging.level.org.springframework.data.mongodb.core.MongoTemplate: INFO
