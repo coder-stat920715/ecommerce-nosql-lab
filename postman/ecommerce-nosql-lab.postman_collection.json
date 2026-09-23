@@ -1,0 +1,916 @@
+{
+  "info": {
+    "name": "Ecommerce NoSQL Lab",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Run folders in order 1 -> 5."
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "tenantId",
+      "value": "tenantA"
+    },
+    {
+      "key": "customerId",
+      "value": "CUST-42"
+    },
+    {
+      "key": "deviceId",
+      "value": "DEV-1001"
+    },
+    {
+      "key": "seedCount",
+      "value": "100000"
+    },
+    {
+      "key": "orderId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Benchmark BEFORE / AFTER indexes (run in order)",
+      "description": "",
+      "item": [
+        {
+          "name": "Step 1 - Drop secondary indexes",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/benchmark/indexes/drop"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Step 2 - Seed orders (default 100000)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/benchmark/seed?count={{seedCount}}"
+            },
+            "description": "Seed with indexes dropped: bulk load is much faster."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test(\"inserted requested rows\", () => pm.expect(pm.response.json().inserted).to.eql(parseInt(pm.collectionVariables.get(\"seedCount\"))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Step 3 - Benchmark (BEFORE: expect COLLSCAN)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/benchmark/run?customerId=CUST-42&iterations=5"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const r = pm.response.json();",
+                  "console.log(\"BEFORE avgMs=\" + r.avgMillis + \" plan=\" + r.plan.leafStage);",
+                  "pm.test(\"collection scan before indexing\", () => pm.expect(r.plan.leafStage).to.eql(\"COLLSCAN\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Step 4 - Create indexes",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/benchmark/indexes/create"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Step 5 - Benchmark (AFTER: expect IXSCAN)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/benchmark/run?customerId=CUST-42&iterations=5"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const r = pm.response.json();",
+                  "console.log(\"AFTER avgMs=\" + r.avgMillis + \" index=\" + r.plan.indexName);",
+                  "pm.test(\"index scan after indexing\", () => pm.expect(r.plan.leafStage).to.eql(\"IXSCAN\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "One-shot compare (drop -> run -> create -> run)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/benchmark/compare?customerId=CUST-42&iterations=5"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "console.log(\"Speedup: \" + pm.response.json().speedup);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Query Profiler (explain executionStats)",
+      "description": "",
+      "item": [
+        {
+          "name": "Explain ESR - targeted (tenantId given)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/performance/explain?scenario=esr&status=DELIVERED&customerId=CUST-42&tenantId=tenantA"
+            },
+            "description": "Shard-key prefix present. On the cluster expect topStage SINGLE_SHARD and shardsTargeted 1."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const c = pm.response.json();",
+                  "pm.test(\"COLLSCAN vs IXSCAN\", () => { pm.expect(c.collectionScan.leafStage).to.eql(\"COLLSCAN\"); pm.expect(c.indexScan.leafStage).to.eql(\"IXSCAN\"); });",
+                  "pm.test(\"index used\", () => pm.expect(c.indexScan.indexName).to.eql(\"esr_status_customer_date\"));",
+                  "console.log(\"Top stage: \" + c.plannerChoice.topStage + \", shards: \" + c.plannerChoice.shardsTargeted + \", \" + c.docsExaminedReduction);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Explain ESR - scatter-gather (no tenantId)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/performance/explain?scenario=esr&status=DELIVERED&customerId=CUST-42"
+            },
+            "description": "No tenantId -> no shard-key prefix -> expect SHARD_MERGE and shardsTargeted 2."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Explain partial index",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/performance/explain?scenario=partial"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test(\"partial index chosen when forced\", () => pm.expect(pm.response.json().indexScan.indexName).to.eql(\"partial_delivered_high_value\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Order indexes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/performance/indexes"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Shard distribution (docs per shard)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/performance/shard-distribution"
+            },
+            "description": "Needs the sharded cluster and seeded data."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Orders (CRUD + index-backed search)",
+      "description": "",
+      "item": [
+        {
+          "name": "Create order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"orderNumber\": \"ORD-PM-{{$timestamp}}\",\n  \"status\": \"DELIVERED\",\n  \"totalAmount\": 750.5,\n  \"couponCode\": \"SAVE10\",\n  \"notes\": \"fragile gift express\",\n  \"tags\": [\n    \"fragile\",\n    \"gift\"\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const o = pm.response.json();",
+                  "pm.expect(o.id).to.be.a(\"string\");",
+                  "pm.collectionVariables.set(\"orderId\", o.id);",
+                  "pm.test(\"tenant stamped from header\", () => pm.expect(o.tenantId).to.eql(pm.collectionVariables.get(\"tenantId\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get order by id (targeted: full shard key)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{orderId}}?customerId={{customerId}}"
+            },
+            "description": "With customerId + tenant header the filter contains the full shard key, so mongos routes to ONE shard."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test(\"id matches\", () => pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get(\"orderId\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get order by id (scatter-gather: no customerId)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{orderId}}"
+            },
+            "description": "No customerId -> no full shard key -> all shards are queried."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update order",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{orderId}}"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"orderNumber\": \"ORD-PM-UPDATED-{{$timestamp}}\",\n  \"status\": \"DELIVERED\",\n  \"totalAmount\": 999.99,\n  \"notes\": \"updated fragile priority\",\n  \"tags\": [\n    \"priority\"\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test(\"amount updated\", () => pm.expect(pm.response.json().totalAmount).to.eql(999.99));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search with index hint (ESR compound index)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/search?status=DELIVERED&customerId={{customerId}}&useHint=true"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search without hint (planner choice)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/search?status=DELIVERED&customerId={{customerId}}&useHint=false"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search with orderDate range",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/search?status=DELIVERED&customerId={{customerId}}&from=2025-01-01T00:00:00Z&to=2027-01-01T00:00:00Z"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Full-text search (weighted text index)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/text?q=fragile%20gift"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "High-value delivered (partial index)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/high-value?minAmount=500"
+            },
+            "description": "Uses the partial index only when minAmount >= 500. Try 100 and compare in explain."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete order",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{orderId}}?customerId={{customerId}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"204 No Content\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Telemetry (TTL) & Geospatial",
+      "description": "",
+      "item": [
+        {
+          "name": "Record telemetry",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/telemetry"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"orderId\": \"ORD-1\",\n  \"temperature\": 21.5,\n  \"batteryLevel\": 88\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Latest telemetry for device",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/telemetry/device/{{deviceId}}?limit=10"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "TTL index info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/telemetry/ttl-info"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test(\"TTL index is 3600s\", () => pm.expect(pm.response.json().some(i => i.ttlSeconds === 3600)).to.be.true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Add location - Pune",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/telemetry/locations"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"CUST-1\",\n  \"city\": \"Pune\",\n  \"location\": {\n    \"type\": \"Point\",\n    \"coordinates\": [\n      73.8567,\n      18.5204\n    ]\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Add location - Mumbai",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/telemetry/locations"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"CUST-2\",\n  \"city\": \"Mumbai\",\n  \"location\": {\n    \"type\": \"Point\",\n    \"coordinates\": [\n      72.8777,\n      19.076\n    ]\n  }\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Near query (5 km around Pune, nearest first)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/telemetry/locations/near?lon=73.8567&lat=18.5204&maxKm=5"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.test(\"Pune returned, Mumbai excluded\", () => { const c = pm.response.json().map(x => x.city); pm.expect(c).to.include(\"Pune\"); pm.expect(c).to.not.include(\"Mumbai\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Near query (200 km: Pune first, then Mumbai)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/telemetry/locations/near?lon=73.8567&lat=18.5204&maxKm=200"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Within circle (geoWithin, 200 km)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/telemetry/locations/within?lon=73.8567&lat=18.5204&radiusKm=200"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Tenant-based application partitioning",
+      "description": "",
+      "item": [
+        {
+          "name": "Save order in tenant DATABASE (X-Tenant-Id: acme)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "acme"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/tenants/orders"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"C1\",\n  \"orderNumber\": \"A-{{$timestamp}}\",\n  \"status\": \"NEW\",\n  \"totalAmount\": 99\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List orders of tenant acme (only acme data)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "acme"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/tenants/orders?limit=10"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Save order in tenant COLLECTION (orders_acme)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "acme"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/tenants/orders/collection-per-tenant"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"C2\",\n  \"orderNumber\": \"B-{{$timestamp}}\",\n  \"status\": \"PAID\",\n  \"totalAmount\": 45\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 2xx\", () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid tenant id (expect rejection)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "../admin"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/tenants/orders"
+            },
+            "description": "Tenant names are whitelisted [A-Za-z0-9_-] to block injection."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"rejected, not 2xx\", () => pm.expect(pm.response.code).to.be.at.least(400));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
